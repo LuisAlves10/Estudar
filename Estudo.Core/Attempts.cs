@@ -47,7 +47,7 @@ public sealed record Score(string Area, int Correct, int Incorrect, int Blank, i
     }
 }
 
-public sealed class AttemptStore
+public sealed partial class AttemptStore
 {
     public static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private readonly string connectionString;
@@ -56,19 +56,33 @@ public sealed class AttemptStore
     {
         DirectoryPath = Path.GetFullPath(directory);
         Directory.CreateDirectory(DirectoryPath);
-        connectionString = new SqliteConnectionStringBuilder { DataSource = Path.Combine(DirectoryPath, "estudos.sqlite3"), Pooling = false }.ToString();
+        var database = Path.Combine(DirectoryPath, "estudos.sqlite3");
+        var existed = File.Exists(database);
+        connectionString = new SqliteConnectionStringBuilder { DataSource = database, Pooling = false }.ToString();
         using var db = Open();
-        using var cmd = db.CreateCommand();
+        using var version = db.CreateCommand();
+        version.CommandText = "PRAGMA user_version";
+        var schema = Convert.ToInt32(version.ExecuteScalar());
+        if (schema > 2) throw new InvalidDataException("Este banco foi atualizado por uma versão mais recente do Estudar.");
+        if (schema < 2 && existed)
+        {
+            var backups = Path.Combine(DirectoryPath, "Backups");
+            Directory.CreateDirectory(backups);
+            Backup(Path.Combine(backups, $"antes_migracao_v2_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.sqlite3"));
+        }
+        using var journal = db.CreateCommand(); journal.CommandText = "PRAGMA journal_mode=WAL;"; journal.ExecuteNonQuery();
+        using var migration = db.BeginTransaction();
+        using var cmd = db.CreateCommand(); cmd.Transaction = migration;
         cmd.CommandText = """
-            PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS attempts (id TEXT PRIMARY KEY, updated_utc TEXT NOT NULL, snapshot TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT NOT NULL REFERENCES attempts(id), utc TEXT NOT NULL, kind TEXT NOT NULL, question_id TEXT, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS events_attempt ON events(attempt_id, sequence);
+            CREATE TABLE IF NOT EXISTS question_study (question_id TEXT NOT NULL, pdf_hash TEXT NOT NULL, metadata TEXT NOT NULL,
+                PRIMARY KEY(question_id, pdf_hash));
             """;
         cmd.ExecuteNonQuery();
-        using var version = db.CreateCommand();
-        version.CommandText = "PRAGMA user_version";
-        if (Convert.ToInt32(version.ExecuteScalar()) == 0) { version.CommandText = "PRAGMA user_version=1"; version.ExecuteNonQuery(); }
+        if (schema < 2) { version.Transaction = migration; version.CommandText = "PRAGMA user_version=2"; version.ExecuteNonQuery(); }
+        migration.Commit();
     }
     private SqliteConnection Open()
     {

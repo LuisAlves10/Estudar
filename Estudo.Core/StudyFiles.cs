@@ -2,6 +2,23 @@ using System.Text.Json;
 
 namespace Estudo.Core;
 
+public sealed class ScratchSurface
+{
+    public double Width { get; set; } = 1600;
+    public double Height { get; set; } = 1200;
+    public double Zoom { get; set; } = 1;
+    public string ZoomMode { get; set; } = "width";
+    public double OffsetX { get; set; }
+    public double OffsetY { get; set; }
+    public void Validate()
+    {
+        if (new[] { Width, Height, Zoom, OffsetX, OffsetY }.Any(v => !double.IsFinite(v)) ||
+            Width is < 400 or > 4800 || Height is < 400 or > 4800 || Zoom is < .1 or > 4 ||
+            OffsetX < 0 || OffsetY < 0 || ZoomMode is not ("width" or "window" or "custom"))
+            throw new InvalidDataException("As dimensões ou o zoom do papel são inválidos. O rascunho original foi preservado.");
+    }
+}
+
 public sealed class Preferences
 {
     public string Theme { get; set; } = "light";

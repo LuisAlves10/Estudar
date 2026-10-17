@@ -22,7 +22,7 @@ public static class Exporter
         {
             var folder = files.Folder(a.Id, q.Id);
             var copied = new List<string>();
-            foreach (var name in new[] { "rascunho.png", "rascunho.isf", "papel.json" })
+            foreach (var name in new[] { "rascunho.png", "rascunho.isf", "papel.json", "superficie.json" })
             {
                 var original = Path.Combine(folder, name);
                 if (!File.Exists(original)) continue;
@@ -36,7 +36,7 @@ public static class Exporter
         var events = store.Events(a.Id);
         var payload = new
         {
-            schema_version = 2, created_utc = DateTimeOffset.UtcNow,
+            schema_version = 3, created_utc = DateTimeOffset.UtcNow,
             purpose = "Revisão assistida de uma tentativa real. Não inferir fraquezas sem evidência repetida. Não estimar TRI.",
             attempt = new { a.Id, a.Title, a.Language, a.StartedUtc, a.FinishedUtc, a.ActiveSeconds },
             official_sources = corpus.Documents.Where(d => d.RelativePath == source.Pdf || d.RelativePath == source.KeyPdf),
@@ -48,12 +48,14 @@ public static class Exporter
                 post_correction_notes = files.ReviewNotes(a.Id, q.Id),
                 attachments = attachments[q.Id],
                 outcome = Outcome(q, a.Response(q)),
-                classification = new { discipline = "indeterminado", topic = "indeterminado", skill = "indeterminado", confidence = "nao_avaliada" }
+                classification = new { source = "manual", topics = store.GetQuestionStudy(q).Topics },
+                reading_regions = new { source = "manual", pdf_hash = q.PdfHash, regions = store.GetQuestionStudy(q).Regions }
             }),
             scores_by_area = Score.Calculate(a), events,
+            scores_by_content = ContentReports.Calculate([a], store.GetQuestionStudy, true).Select(s => new { s.Label, s.Correct, s.Incorrect, s.Blank, s.Annulled, s.Answered, s.DistinctAnswered, s.Accuracy, s.SmallSample }),
             limitations = new[] { "Tempo ativo estimado: não prova atenção nem tempo de raciocínio.",
                 "Páginas são físicas, a partir de 1. Enunciados podem continuar na página seguinte.",
-                "Os dois PDFs anexos preservam enunciados, imagens e gabarito. Não foram feitos recortes automáticos.",
+                "Os dois PDFs anexos preservam enunciados, imagens e gabarito. Regiões de leitura são manuais, relativas à página; não alteram o original.",
                 "Acertos por área não correspondem a nota TRI. Anuladas são separadas e excluídas do denominador.",
                 "Redação não é corrigida nesta versão. Classificações temáticas e diagnósticos por IA precisam de revisão." }
         };
@@ -67,18 +69,26 @@ public static class Exporter
             var r = a.Response(q);
             md.AppendLine($"| {q.Number} | {AreaName(q.Area)} | {r.Answer ?? "—"} | {q.OfficialAnswer} | {Outcome(q, r)} | {r.Confidence} | {r.ActiveSeconds:F0}s | {q.Page} |");
         }
+        md.AppendLine("\n## Classificações manuais\n");
+        foreach (var q in a.Questions)
+        {
+            var study = store.GetQuestionStudy(q);
+            if (study.Topics.Count > 0) md.AppendLine($"- Questão {q.Number}: {string.Join("; ", study.Topics.Select(t => t.Display + (t.Tags.Length > 0 ? " [" + string.Join(", ", t.Tags) + "]" : "")))}");
+            if (study.Regions.Count > 0) md.AppendLine($"  - {study.Regions.Count} região(ões) manual(is), páginas {string.Join(", ", study.Regions.Select(r => r.Page).Distinct())}; coordenadas e hash no JSON.");
+        }
         md.AppendLine("\n## Anotações e marcações\n");
         foreach (var q in a.Questions.Where(q => a.Response(q).Notes.Length > 0 || a.Response(q).Review))
             md.AppendLine($"### Questão {q.Number}\n\nRevisar: {a.Response(q).Review}.\n\n{a.Response(q).Notes}\n");
-        md.AppendLine("## Fontes\n");
+        md.AppendLine("## Revisão e rascunhos\n");
         foreach (var q in a.Questions.Where(q => attachments[q.Id].Length > 0 || files.ReviewNotes(a.Id, q.Id).Length > 0))
         {
             md.AppendLine($"### Revisão da questão {q.Number}\n\n{files.ReviewNotes(a.Id, q.Id)}\n");
             foreach (var image in attachments[q.Id].Where(p => p.EndsWith(".png"))) md.AppendLine($"![Rascunho da questão {q.Number}]({image})\n");
         }
+        md.AppendLine("## Fontes\n");
         foreach (var d in corpus.Documents.Where(d => d.RelativePath == source.Pdf || d.RelativePath == source.KeyPdf))
             md.AppendLine($"- {d.Title}: {d.Url}\n  - Arquivo: {Path.GetFileName(d.RelativePath)}\n  - SHA-256: `{d.Sha256}`");
-        md.AppendLine("\nOs eventos completos e os metadados originais estão no JSON. Notas e respostas são dados pessoais; classificações de tema/habilidade ainda não foram realizadas.");
+        md.AppendLine("\nOs eventos completos e os metadados originais estão no JSON. Notas, respostas e classificações são dados locais do usuário. Classificações manuais não são metadados oficiais; nenhuma habilidade foi inferida.");
         File.WriteAllText(Path.Combine(directory, "LEIA_COM_A_IA.md"), md.ToString(), Encoding.UTF8);
         var hashes = Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Order().Select(p => $"{Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(p)))}  {Path.GetRelativePath(directory, p).Replace('\\', '/')}");
         File.WriteAllLines(Path.Combine(directory, "SHA256SUMS.txt"), hashes);

@@ -10,7 +10,7 @@ internal static class UI
     public static Brush Brush(string name) => (Brush)Application.Current.Resources[name];
     public static TextBlock Text(string text, double size = 14, string color = "Ink", bool bold = false)
     {
-        var block = new TextBlock { Text = text, FontSize = size, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, Margin = new Thickness(0, 0, 0, 6) };
+        var block = new TextBlock { Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, Margin = new Thickness(0, 0, 0, 6) };
         block.SetResourceReference(TextBlock.ForegroundProperty, color == "Accent" ? "AccentText" : color); return block;
     }
     public static Button Button(string label, Action action, bool primary = false)
@@ -39,6 +39,8 @@ internal static class UI
     public static void Alert(string title, string text) => Dialog(title, text, "Entendi", false);
     private static bool Dialog(string title, string text, string label, bool cancel)
     {
+        if (AppContext.TryGetSwitch("Estudar.NonInteractiveVerification", out var verifying) && verifying)
+            throw new InvalidOperationException($"{title}: {text}");
         var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? Application.Current.MainWindow;
         var dialog = new Window { Title = title, Width = 480, SizeToContent = SizeToContent.Height, ResizeMode = ResizeMode.NoResize, WindowStartupLocation = WindowStartupLocation.CenterOwner, Owner = owner, ShowInTaskbar = false };
         var accept = Button(label, () => dialog.DialogResult = true, true); accept.IsDefault = true;

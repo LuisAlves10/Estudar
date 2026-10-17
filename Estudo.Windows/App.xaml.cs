@@ -34,11 +34,25 @@ public partial class App : Application
             var window = new MainWindow(new Corpus(corpusPath, catalog), new AttemptStore(data), preferences, catalog, applicationRoot, qaIndex >= 0);
             var sizeIndex = Array.IndexOf(e.Args, "--qa-size");
             if (sizeIndex >= 0 && sizeIndex + 1 < e.Args.Length) { var dimensions = e.Args[sizeIndex + 1].Split('x'); window.Width = int.Parse(dimensions[0]); window.Height = int.Parse(dimensions[1]); }
+            if (qaIndex >= 0 && e.Args.Contains("--qa-background"))
+            {
+                window.ShowActivated = false; window.ShowInTaskbar = false; window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -20000; window.Top = -20000;
+                var shutdown = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+                shutdown.Tick += (_, _) =>
+                {
+                    shutdown.Stop();
+                    File.WriteAllText(Path.Combine(data, "startup-verification.json"), System.Text.Json.JsonSerializer.Serialize(new { documents = window.Corpus.Documents.Count, attempts = window.Store.All().Count, activated = window.IsActive, version = typeof(App).Assembly.GetName().Version?.ToString() }));
+                    window.Close();
+                };
+                shutdown.Start();
+            }
             window.Show();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Não foi possível abrir o app.\n\n{ex.Message}\n\nMantenha o catálogo junto do aplicativo.", "Estudar", MessageBoxButton.OK, MessageBoxImage.Error);
+            if (e.Args.Contains("--qa-background")) Console.Error.WriteLine(ex);
+            else MessageBox.Show($"Não foi possível abrir o app.\n\n{ex.Message}\n\nMantenha o catálogo junto do aplicativo.", "Estudar", MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
         }
     }

@@ -14,10 +14,17 @@ public partial class MainWindow : Window
     private IDisposable? current;
     private readonly Dictionary<string, Button> navigation = [];
     private readonly bool qa;
+    private bool focusMode;
+    public void ToggleFocus()
+    {
+        focusMode = !focusMode; Sidebar.Visibility = focusMode ? Visibility.Collapsed : Visibility.Visible;
+        NavColumn.Width = new GridLength(focusMode ? 0 : ActualWidth < 1150 ? 156 : 192);
+    }
     public MainWindow(Corpus corpus, AttemptStore store, Preferences preferences, string catalog, string applicationRoot, bool qa)
     {
         Corpus = corpus; Store = store; Preferences = preferences; this.catalog = catalog; this.applicationRoot = applicationRoot; this.qa = qa;
         InitializeComponent(); UI.ApplyTheme(preferences.Theme);
+        SizeChanged += (_, _) => { if (!focusMode) NavColumn.Width = new GridLength(ActualWidth < 1150 ? 156 : 192); };
         if (qa) { Title += " · Teste isolado"; LocalInfo.Text = "Dados demonstrativos isolados"; }
         foreach (var (label, symbol) in new[] { ("Início", "⌂"), ("Biblioteca", "▤"), ("Simulados", "▷"), ("Histórico", "◷"), ("Revisão", "✓"), ("Configurações", "⚙") })
         {
@@ -82,6 +89,7 @@ public partial class MainWindow : Window
         var rows = Store.All().Where(a => review ? a.IsFinished : !running || !a.IsFinished).ToList();
         var page = UI.Stack(UI.Text(title, 30, bold: true), UI.Text(review ? "Erros, dúvidas e marcações das tentativas finalizadas." : running ? "Retome suas sessões. Cada nova tentativa mantém um registro independente." : "Todas as suas tentativas, com respostas e anotações preservadas.", color: "Muted"));
         page.Children.Add(UI.Row(UI.Button("Escolher uma prova", () => ShowPage("Biblioteca"), true)));
+        if (review) page.Children.Add(UI.Row(UI.Button("Revisão por conteúdo", () => SetContent(new ContentReportView(this), "Revisão"), true)));
         foreach (var a in rows) page.Children.Add(AttemptCard(a));
         if (rows.Count == 0) page.Children.Add(UI.Card(UI.Stack(UI.Text(review ? "Sua revisão começa depois do primeiro simulado" : "Nenhuma tentativa por aqui", 21, bold: true), UI.Text("Abra a biblioteca para começar. Seus dados serão registrados apenas quando você responder.", color: "Muted"))));
         SetContent(UI.Scroll(page), title);
@@ -99,6 +107,13 @@ public partial class MainWindow : Window
     public void ReviewQuestion(Attempt a, int index) { a.CurrentIndex = index; OpenAttempt(a, "Todas"); }
     public void Export(Attempt a)
     {
+        var files = new StudyFiles(Store.DirectoryPath);
+        foreach (var q in a.Questions)
+        {
+            var folder = files.Folder(a.Id, q.Id); var ink = Path.Combine(folder, "rascunho.isf"); var png = Path.Combine(folder, "rascunho.png");
+            if (File.Exists(ink) && (!File.Exists(png) || File.GetLastWriteTimeUtc(ink) > File.GetLastWriteTimeUtc(png)))
+                new ScratchPad(folder, true, Preferences.Paper, () => { }, () => { }).Flush();
+        }
         var path = Exporter.Export(Corpus, Store, a); Notify("✓ Exportação criada: JSON, Markdown, PDFs e rascunhos. Nenhum dado foi enviado.");
         UI.Alert("Exportação pronta", "Os arquivos foram salvos na pasta Exportacoes. O pacote inclui seus dados pessoais e os documentos originais; escolha o que compartilhar."); UI.Open(path);
     }
@@ -125,7 +140,7 @@ public partial class MainWindow : Window
                 UI.Row(UI.Button("Baixar provas oficiais", Download), UI.Button("Selecionar pasta do acervo", SelectCorpus), UI.Button("Abrir pasta de registros", () => UI.Open(Store.DirectoryPath))),
                 UI.Row(UI.Button("Fazer backup do banco", () => { var folder = Path.Combine(Store.DirectoryPath, "Backups"); Directory.CreateDirectory(folder); Store.Backup(Path.Combine(folder, "estudos_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".sqlite3")); Notify("✓ Backup do banco concluído. Rascunhos permanecem na pasta Questoes."); })))),
             UI.Card(UI.Stack(UI.Text("Atalhos", 20, bold: true), UI.Text("Ctrl + Alt + A–E   ·   Selecionar alternativa\nCtrl + Alt + ← / →   ·   Questão anterior / próxima\nTab / Shift + Tab   ·   Navegar entre controles\nNo leitor: seleção de texto, scroll e controles próprios de página e zoom.\nNo rascunho: ferramenta Mover ou botão do meio para arrastar.", color: "Muted"))),
-            UI.Card(UI.Stack(UI.Text("Estudar 2.0", 20, bold: true), UI.Text("ENEM: acertos brutos por área, sem estimativa TRI. Redação, PAS e UnB ainda não têm correção automática.\nPágina inicial da questão mapeada; recortes e habilidades não são inferidos.\nRascunhos usam tinta do Windows; a pressão depende do dispositivo e do driver.", color: "Muted"))));
+            UI.Card(UI.Stack(UI.Text("Estudar", 20, bold: true), UI.Text("ENEM: acertos brutos por área, sem estimativa TRI. Redação, PAS e UnB ainda não têm correção automática.\nRecortes e classificações são definidos manualmente e vinculados ao PDF original.\nRascunhos usam tinta do Windows; a pressão depende do dispositivo e do driver.", color: "Muted"))));
         SetContent(UI.Scroll(page), "Configurações");
     }
     private void Download()

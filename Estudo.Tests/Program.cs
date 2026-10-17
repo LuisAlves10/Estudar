@@ -14,6 +14,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--ui-verify") return InterfaceVerification.Run(args[1], args[2]);
         var root = Path.Combine(Path.GetTempPath(), "Estudar-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "Dados"));
         var checks = new List<string>();
@@ -57,9 +58,11 @@ internal static class Program
             files.SaveReview(attempt, attempt.Questions[0], "Observação após corrigir");
             Check(JsonSerializer.Serialize(attempt.Responses) == previous, "Post-correction notes do not overwrite original response");
             Check(files.ReviewNotes(attempt.Id, attempt.Questions[0].Id).Contains("corrigir"), "Post-correction notes persist separately");
+            StudyTests.Run(root, attempt, store, Check, Reject);
             var exported = Exporter.Export(corpus, store, attempt); using var payload = JsonDocument.Parse(File.ReadAllText(Path.Combine(exported, "tentativa.json")));
             var item = payload.RootElement.GetProperty("questions")[0];
-            Check(payload.RootElement.GetProperty("schema_version").GetInt32() == 2 && item.GetProperty("attachments").GetArrayLength() == 3, "Export schema 2 includes editable ink, PNG and paper");
+            Check(payload.RootElement.GetProperty("schema_version").GetInt32() == 3 && item.GetProperty("attachments").GetArrayLength() == 4, "Export schema 3 includes editable ink, PNG, paper and viewport");
+            Check(item.GetProperty("classification").GetProperty("topics").GetArrayLength() == 2 && item.GetProperty("reading_regions").GetProperty("regions").GetArrayLength() == 1, "Export separates manual themes and regions from official metadata");
             Check(item.GetProperty("post_correction_notes").GetString()!.Contains("corrigir"), "Export includes post-correction notes");
             Check(File.ReadAllText(Path.Combine(exported, "LEIA_COM_A_IA.md")).Contains("![Rascunho"), "Markdown links scratch images");
             foreach (var line in File.ReadAllLines(Path.Combine(exported, "SHA256SUMS.txt"))) { var relative = line[66..]; Check(Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(Path.Combine(exported, relative)))) == line[..64], "Export file integrity: " + relative); }
@@ -87,6 +90,35 @@ internal static class Program
         var redo = Descendants(pad).OfType<Button>().Single(b => (string?)b.Content == "Refazer"); redo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); check(canvas.Strokes.Count == 1, "Ink redo"); pad.Flush();
         var frozen = new ScratchPad(folder, true, "Branco", () => { }, () => { });
         check(Descendants(frozen).OfType<InkCanvas>().Single().EditingMode == InkCanvasEditingMode.None, "Finished ink is read-only");
+        var beforeZoom = File.ReadAllBytes(Path.Combine(folder, "rascunho.isf"));
+        pad.SetZoom(2); pad.ExpandPaper(); pad.Flush();
+        check(canvas.Height == 2000 && File.ReadAllBytes(Path.Combine(folder, "rascunho.isf")).SequenceEqual(beforeZoom), "Paper expansion and zoom never resample editable strokes");
+        using (var png = File.OpenRead(Path.Combine(folder, "rascunho.png")))
+            check(System.Windows.Media.Imaging.BitmapDecoder.Create(png, System.Windows.Media.Imaging.BitmapCreateOptions.None, System.Windows.Media.Imaging.BitmapCacheOption.OnLoad).Frames[0].PixelHeight == 2000, "PNG export covers expanded paper independently of viewport");
+        var expanded = new ScratchPad(folder, false, "Branco", () => { }, () => { });
+        check(Descendants(expanded).OfType<InkCanvas>().Single().Height == 2000, "Expanded surface dimensions survive restart");
+        pad.SetPaused(true); check(canvas.EditingMode == InkCanvasEditingMode.None && !undo.IsEnabled, "Pause locks drawing and undo without deleting ink");
+        pad.SetPaused(false); check(canvas.EditingMode == InkCanvasEditingMode.Ink && canvas.Strokes.Count == 1, "Resume restores tools and original ink");
+        pad.FitToWindow(); pad.ResetZoom(); check(((System.Windows.Media.ScaleTransform)canvas.LayoutTransform).ScaleX == 1, "Reset returns scratchpad to native logical zoom");
+        var tool = Descendants(pad).OfType<ComboBox>().Single(c => c.Items.Contains("Caneta"));
+        foreach (var name in new[] { "Marca-texto", "Borracha", "Mover", "Caneta" }) tool.SelectedItem = name;
+        check(canvas.Strokes.Count == 1 && !canvas.DefaultDrawingAttributes.IgnorePressure, "Tool switches preserve strokes and native pressure support");
+        var empty = new ScratchPad(folder + "-another-question", false, "Branco", () => { }, () => { });
+        check(Descendants(empty).OfType<InkCanvas>().Single().Strokes.Count == 0, "Question scratchpads remain isolated");
+        File.Delete(Path.Combine(folder, "rascunho.png"));
+        var vector = File.ReadAllBytes(Path.Combine(folder, "rascunho.isf"));
+        new ScratchPad(folder, true, "Branco", () => { }, () => { }).Flush();
+        check(File.Exists(Path.Combine(folder, "rascunho.png")) && File.ReadAllBytes(Path.Combine(folder, "rascunho.isf")).SequenceEqual(vector), "Missing PNG is recovered from finished ink without modifying original vectors");
+        var automaticFolder = folder + "-autosave";
+        var automatic = new ScratchPad(automaticFolder, false, "Branco", () => { }, () => { });
+        Descendants(automatic).OfType<InkCanvas>().Single().Strokes.Add(stroke.Clone());
+        var frame = new System.Windows.Threading.DispatcherFrame();
+        var pulse = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1100) };
+        pulse.Tick += (_, _) => { pulse.Stop(); frame.Continue = false; }; pulse.Start();
+        System.Windows.Threading.Dispatcher.PushFrame(frame);
+        check(File.Exists(Path.Combine(automaticFolder, "rascunho.isf")), "Dispatcher autosave persists vectors without explicit flush");
+        new ScratchPad(automaticFolder, true, "Branco", () => { }, () => { }).Flush();
+        check(File.Exists(Path.Combine(automaticFolder, "rascunho.png")), "Deferred preview is recoverable after an autosave-only shutdown");
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)
     {

@@ -28,6 +28,8 @@ public sealed class ExamView : UserControl, IDisposable
     private readonly ColumnDefinition side = new();
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) }, debounce = new() { Interval = TimeSpan.FromMilliseconds(650) };
     private readonly StudyFiles files;
+    private readonly WrapPanel quickAnswers = UI.Row();
+    private readonly TextBlock topicSummary = UI.Text("Sem classificação temática", 12, "Muted");
     private ScratchPad? scratch;
     private Window? scratchWindow;
     private bool painting, dirty, scratchVisible, disposed, confirmingFinish;
@@ -38,6 +40,7 @@ public sealed class ExamView : UserControl, IDisposable
     {
         this.shell = shell; engine = new(attempt, shell.Store); files = new(shell.Store.DirectoryPath);
         pdf = new(shell.Corpus, shell.Store.DirectoryPath) { Shortcut = Shortcut };
+        pdf.RegionEdited += RegionEdited;
         confidence = UI.Choice(new[] { "Não informada", "Tenho certeza", "Acho que sei", "Chutei" }, SaveAnswer, 250);
         pause = UI.Button("Pausar", TogglePause); previous = UI.Button("← Anterior", () => Navigate(Attempt.CurrentIndex - 1)); next = UI.Button("Próxima →", () => Navigate(Attempt.CurrentIndex + 1), true);
         finish = UI.Button(attempt.IsFinished ? "Ver resultados" : "Finalizar e corrigir", Finish);
@@ -47,12 +50,16 @@ public sealed class ExamView : UserControl, IDisposable
         var controls = UI.Row(clock, pause); controls.Margin = new Thickness(20, 0, 0, 0); Grid.SetColumn(controls, 1); top.Children.Add(controls);
         var answerRow = UI.Row();
         for (var i = 0; i < 5; i++) { var label = ((char)('A' + i)).ToString(); var b = UI.Button(label, () => SaveAnswer(label, true)); b.Width = 44; b.Height = 46; b.FontSize = 18; b.Margin = new Thickness(0, 0, 6, 0); answers.Add(b); answerRow.Children.Add(b); }
+        quickAnswers.Children.Add(UI.Text("Resposta", 12, "Muted"));
+        for (var i = 0; i < 5; i++) { var label = ((char)('A' + i)).ToString(); var b = UI.Button(label, () => SaveAnswer(label, true)); b.Width = 40; b.Height = 36; answers.Add(b); quickAnswers.Children.Add(b); }
+        quickAnswers.Visibility = Visibility.Collapsed;
         review.Click += (_, _) => SaveAnswer();
         notes.TextChanged += (_, _) => NoteChanged(); postNotes.TextChanged += (_, _) => NoteChanged();
         var notesExpander = new Expander { Header = "Anotações da questão", Content = notes };
         var postExpander = new Expander { Header = "Observações após a correção", Content = postNotes, IsExpanded = attempt.IsFinished, Visibility = attempt.IsFinished ? Visibility.Visible : Visibility.Collapsed };
         var sideContent = UI.Stack(questionTitle, meta, result, UI.Text("SUA RESPOSTA", 11, "Muted", true), answerRow, blank,
             UI.Text("Confiança na resposta", 12, "Muted"), confidence, review, notesExpander, postExpander,
+            new Expander { Header = "Conteúdos da questão (opcional)", Content = UI.Stack(topicSummary, UI.Row(UI.Button("Classificar / editar", () => QuestionStudyEditor.Open(shell, shell.Store, Current, Paint)))) },
             UI.Row(UI.Button("Abrir rascunho", ToggleScratch), UI.Button("Cartão de respostas", Card)),
             UI.Text("Ctrl + Alt + A–E: responder\nCtrl + Alt + ← / →: navegar", 11, "Muted"));
         var answerDock = new DockPanel(); var sideFooter = UI.Stack(saved, finish); DockPanel.SetDock(sideFooter, Dock.Bottom); answerDock.Children.Add(sideFooter); answerDock.Children.Add(UI.Scroll(sideContent));
@@ -61,15 +68,35 @@ public sealed class ExamView : UserControl, IDisposable
         body.Children.Add(pdf); Grid.SetColumn(answerPanel, 2); body.Children.Add(answerPanel); Grid.SetColumn(scratchHost, 2); body.Children.Add(scratchHost); scratchHost.Visibility = Visibility.Collapsed;
         var splitter = new GridSplitter { Width = 8, HorizontalAlignment = HorizontalAlignment.Stretch, Background = Brushes.Transparent }; Grid.SetColumn(splitter, 1); body.Children.Add(splitter);
         splitter.DragCompleted += (_, _) => { if (!scratchVisible) { shell.Preferences.AnswerWidth = side.ActualWidth; shell.SavePreferences(); } };
-        var bottom = UI.Row(previous, next, UI.Button("Cartão de respostas", Card), UI.Button("Rascunho", ToggleScratch), UI.Button("Recolher painel", TogglePanel), UI.Button("Abrir original", () => UI.Open(shell.Corpus.Resolve(Current.Pdf))));
-        var grid = new Grid(); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new()); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); top.Margin = new Thickness(0, 0, 0, 18); grid.Children.Add(top); Grid.SetRow(body, 1); grid.Children.Add(body); Grid.SetRow(bottom, 2); grid.Children.Add(bottom); Content = grid;
+        var more = new Button { Content = "Mais", Margin = new Thickness(0, 0, 8, 0) };
+        var menu = new ContextMenu();
+        var collapse = new MenuItem { Header = "Recolher / abrir painel" }; collapse.Click += (_, _) => UI.Safe(TogglePanel); menu.Items.Add(collapse);
+        var original = new MenuItem { Header = "Abrir PDF original" }; original.Click += (_, _) => UI.Safe(() => UI.Open(shell.Corpus.Resolve(Current.Pdf))); menu.Items.Add(original);
+        more.ContextMenu = menu; more.Click += (_, _) => { menu.PlacementTarget = more; menu.IsOpen = true; };
+        var bottom = UI.Row(previous, next, quickAnswers, UI.Button("Cartão", Card), UI.Button("Rascunho", ToggleScratch), UI.Button("Foco", shell.ToggleFocus), more);
+        var grid = new Grid(); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new()); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); top.Margin = new Thickness(0, 0, 0, 10); grid.Children.Add(top); Grid.SetRow(body, 1); grid.Children.Add(body); Grid.SetRow(bottom, 2); grid.Children.Add(bottom); Content = grid;
+        body.SizeChanged += (_, _) => { if (scratchVisible) ApplyPosition(shell.Preferences.ScratchOnLeft); };
         debounce.Tick += (_, _) => UI.Safe(Flush);
         timer.Tick += (_, _) => UI.Safe(() => { engine.Touch(); PaintClock(); if (++ticks % 5 == 0) { engine.Checkpoint(); saved.Text = "✓ Salvo neste dispositivo"; } });
         PreviewKeyDown += KeyDownHandler;
         if (!attempt.IsFinished) engine.Resume();
         Paint(); ShowPdf(); timer.Start();
     }
-    private void ShowPdf() => _ = pdf.Show(Current.Pdf, Current.PdfHash, Current.Page);
+    private void ShowPdf() => _ = pdf.Show(Current.Pdf, Current.PdfHash, Current.Page, shell.Store.GetQuestionStudy(Current));
+    private void RegionEdited(string id, string action, int index, QuestionRegion? region)
+    {
+        if (id != Current.Id) return;
+        var data = shell.Store.GetQuestionStudy(Current);
+        if (action == "add" && region != null) { region.Validate(); data.Regions.Add(region); }
+        else if (index >= 0 && index < data.Regions.Count)
+        {
+            if (action == "replace" && region != null) { region.Validate(); data.Regions[index] = region; }
+            else if (action == "remove" && UI.Confirm("Excluir este recorte?", "A região será removida. O PDF oficial continuará intacto.", "Excluir recorte")) data.Regions.RemoveAt(index);
+            else return;
+        }
+        else return;
+        shell.Store.SaveQuestionStudy(Current, data); _ = pdf.UpdateRegions(data); shell.Notify("✓ Recortes desta questão salvos localmente");
+    }
     private void PaintClock() { clock.Text = UI.Duration(Attempt.ActiveSeconds); progress.Text = $"{Attempt.Answered} de 90 respondidas · {Attempt.Responses.Values.Count(r => r.Review)} para revisar"; bar.Value = Attempt.Answered; }
     private void Paint()
     {
@@ -79,6 +106,8 @@ public sealed class ExamView : UserControl, IDisposable
             var r = Attempt.Response(Current); var editable = engine.Running && !Attempt.IsFinished;
             sessionTitle.Text = $"{Attempt.Title} · questão {Current.Number}";
             questionTitle.Text = $"Questão {Current.Number}"; meta.Text = Exporter.AreaName(Current.Area) + " · caderno azul" + (Current.Language == "nao_se_aplica" ? "" : " · " + Exporter.LanguageName(Current.Language));
+            var topics = shell.Store.GetQuestionStudy(Current).Topics;
+            topicSummary.Text = topics.Count == 0 ? "Sem classificação temática" : string.Join("\n", topics.Select(t => t.Display));
             result.Text = Attempt.IsFinished ? $"{ResultsView.OutcomeLabel(Exporter.Outcome(Current, r))}\nSua resposta: {r.Answer ?? "em branco"} · oficial: {Current.OfficialAnswer}" : "";
             result.Visibility = Attempt.IsFinished ? Visibility.Visible : Visibility.Collapsed;
             result.SetResourceReference(ForegroundProperty, Exporter.Outcome(Current, r) == "erro" ? "Bad" : Exporter.Outcome(Current, r) == "acerto" ? "Good" : "Muted");
@@ -90,6 +119,7 @@ public sealed class ExamView : UserControl, IDisposable
             previous.IsEnabled = Attempt.CurrentIndex > 0; next.IsEnabled = Attempt.CurrentIndex < 89;
             saved.Text = Attempt.IsFinished ? "Tentativa finalizada · respostas preservadas" : engine.Running ? "✓ Salvo neste dispositivo" : "Ⅱ Pausado · retome para responder";
             scratch?.SetPaused(!engine.Running); PaintClock();
+            quickAnswers.Visibility = scratchVisible || side.Width.Value == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { painting = false; }
     }
@@ -116,7 +146,7 @@ public sealed class ExamView : UserControl, IDisposable
     }
     private void TogglePause() { Flush(); if (engine.Running) engine.Pause(); else engine.Resume(); Paint(); }
     public void PauseForNavigation() { Flush(); engine.Pause("left_session"); Paint(); }
-    private void TogglePanel() { if (scratchVisible) ToggleScratch(); if (side.Width.Value == 0) { side.MinWidth = 292; side.Width = new GridLength(shell.Preferences.AnswerWidth); } else { side.MinWidth = 0; side.Width = new GridLength(0); } }
+    private void TogglePanel() { if (scratchVisible) ToggleScratch(); if (side.Width.Value == 0) { side.MinWidth = 292; side.Width = new GridLength(shell.Preferences.AnswerWidth); } else { side.MinWidth = 0; side.Width = new GridLength(0); } Paint(); }
     public void PauseWhenInactive()
     {
         if (disposed || Application.Current.Windows.OfType<Window>().Any(w => w.IsActive)) return;
@@ -137,7 +167,7 @@ public sealed class ExamView : UserControl, IDisposable
     }
     private void Card()
     {
-        var dialog = new Window { Title = "Cartão de respostas", Width = 670, Height = 700, MinWidth = 530, MinHeight = 450, Owner = shell, WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        var dialog = new Window { Title = "Cartão de respostas", Width = Math.Min(670, shell.ActualWidth - 24), Height = Math.Min(700, shell.ActualHeight - 24), MinWidth = 400, MinHeight = 320, Owner = shell, WindowStartupLocation = WindowStartupLocation.CenterOwner };
         var grid = new UniformGrid { Columns = 10 }; var count = UI.Text($"{Attempt.Answered} respondidas · {90 - Attempt.Answered} pendentes", 15, "Muted");
         var filter = UI.Choice(new[] { "Todas", "Não respondidas", "Para revisar" }, null, 200);
         void Render()
@@ -160,8 +190,8 @@ public sealed class ExamView : UserControl, IDisposable
     private void ToggleScratch()
     {
         if (scratchWindow != null) { scratchWindow.Activate(); return; }
-        if (scratchVisible) { scratch!.Flush(); scratchVisible = false; scratchHost.Visibility = Visibility.Collapsed; answerPanel.Visibility = Visibility.Visible; side.MinWidth = 292; side.Width = new GridLength(shell.Preferences.AnswerWidth); ApplyPosition(false); return; }
-        scratchVisible = true; side.MinWidth = 380; side.Width = new GridLength(440); answerPanel.Visibility = Visibility.Collapsed; scratchHost.Visibility = Visibility.Visible; LoadScratch(); ApplyPosition(shell.Preferences.ScratchOnLeft);
+        if (scratchVisible) { scratch!.Flush(); scratchVisible = false; scratchHost.Visibility = Visibility.Collapsed; answerPanel.Visibility = Visibility.Visible; side.MinWidth = 292; side.Width = new GridLength(shell.Preferences.AnswerWidth); ApplyPosition(false); Paint(); return; }
+        scratchVisible = true; side.MinWidth = 280; side.Width = new GridLength(440); answerPanel.Visibility = Visibility.Collapsed; scratchHost.Visibility = Visibility.Visible; LoadScratch(); ApplyPosition(shell.Preferences.ScratchOnLeft); Paint();
     }
     private void LoadScratch()
     {
@@ -176,15 +206,16 @@ public sealed class ExamView : UserControl, IDisposable
     private void ApplyPosition(bool left)
     {
         Grid.SetColumn(pdf, left ? 2 : 0); Grid.SetColumn(scratchHost, left ? 0 : 2);
-        body.ColumnDefinitions[0].Width = left ? new GridLength(440) : new GridLength(1, GridUnitType.Star);
-        side.Width = left ? new GridLength(1, GridUnitType.Star) : new GridLength(scratchVisible ? 440 : shell.Preferences.AnswerWidth);
+        var scratchWidth = body.ActualWidth > 0 ? Math.Clamp(body.ActualWidth * .44, 280, 500) : 440;
+        body.ColumnDefinitions[0].Width = left ? new GridLength(scratchWidth) : new GridLength(1, GridUnitType.Star);
+        side.Width = left ? new GridLength(1, GridUnitType.Star) : new GridLength(scratchVisible ? scratchWidth : shell.Preferences.AnswerWidth);
     }
     private void DetachScratch()
     {
         if (scratchWindow != null) return;
         scratchHost.Content = null; scratchHost.Visibility = Visibility.Collapsed; scratchVisible = false; answerPanel.Visibility = Visibility.Visible; side.MinWidth = 292; ApplyPosition(false);
         scratch!.SetDetached(true);
-        var detached = new Window { Title = $"Rascunho · questão {Current.Number}", Width = 900, Height = 680, MinWidth = 540, MinHeight = 400, Owner = shell, Content = new Border { Padding = new Thickness(14), Child = scratch } };
+        var detached = new Window { Title = $"Rascunho · questão {Current.Number}", Width = Math.Min(900, SystemParameters.WorkArea.Width - 32), Height = Math.Min(680, SystemParameters.WorkArea.Height - 32), MinWidth = 360, MinHeight = 320, Owner = shell, Content = new Border { Padding = new Thickness(14), Child = scratch } };
         scratchWindow = detached;
         scratchWindow.Closing += (_, e) => { try { scratch?.Flush(); } catch (Exception ex) { e.Cancel = true; UI.Alert("Não foi possível salvar o rascunho", ex.Message); } };
         scratchWindow.Closed += (_, _) => { if (ReferenceEquals(scratchWindow, detached)) { scratchWindow = null; scratch = null; } };
@@ -199,7 +230,7 @@ public sealed class ExamView : UserControl, IDisposable
         if (window.Content is Border container) container.Child = null;
         window.Content = null; scratchWindow = null; window.Close(); scratch = pad;
         pad.SetDetached(false); scratchHost.Content = pad; scratchHost.Visibility = Visibility.Visible;
-        answerPanel.Visibility = Visibility.Collapsed; scratchVisible = true; side.MinWidth = 380;
+        answerPanel.Visibility = Visibility.Collapsed; scratchVisible = true; side.MinWidth = 280;
         ApplyPosition(shell.Preferences.ScratchOnLeft);
     }
     private void KeyDownHandler(object sender, KeyEventArgs e)

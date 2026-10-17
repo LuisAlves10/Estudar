@@ -19,6 +19,8 @@ public sealed class PdfPane : UserControl, IDisposable
     private string? path;
     private int request;
     private bool disposed;
+    private string? questionId;
+    public event Action<string, string, int, QuestionRegion?>? RegionEdited;
     public Action<string>? Shortcut { get; set; }
     public PdfPane(Corpus corpus, string data)
     {
@@ -53,7 +55,16 @@ public sealed class PdfPane : UserControl, IDisposable
             switch (root.GetProperty("kind").GetString())
             {
                 case "ready": ready.TrySetResult(); break;
-                case "rendered": message.Text = $"Página {root.GetProperty("page")} de {root.GetProperty("total")} · o enunciado pode continuar na próxima página"; break;
+                case "rendered": message.Text = root.GetProperty("mode").GetString() == "question" ? "Recortes definidos manualmente · PDF original preservado" : $"Página {root.GetProperty("page")} de {root.GetProperty("total")} · PDF integral"; break;
+                case "region":
+                    var id = root.GetProperty("questionId").GetString();
+                    if (id == questionId && id != null)
+                    {
+                        var region = root.TryGetProperty("region", out var value) && value.ValueKind == JsonValueKind.Object
+                            ? JsonSerializer.Deserialize<QuestionRegion>(value.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) : null;
+                        UI.Safe(() => RegionEdited?.Invoke(id, root.GetProperty("action").GetString()!, root.GetProperty("index").GetInt32(), region));
+                    }
+                    break;
                 case "error": message.Text = "Leitor indisponível. Use Abrir original."; System.Diagnostics.Trace.WriteLine(root.GetProperty("message").GetString()); break;
                 case "shortcut": Shortcut?.Invoke(root.GetProperty("action").GetString()!); break;
             }
@@ -61,9 +72,10 @@ public sealed class PdfPane : UserControl, IDisposable
         core.Navigate("https://leitor.estudar/index.html");
         await ready.Task.WaitAsync(TimeSpan.FromSeconds(30));
     }
-    public async Task Show(string relative, string hash, int page)
+    public async Task Show(string relative, string hash, int page, QuestionStudyData? study = null)
     {
         var ticket = ++request;
+        questionId = study?.QuestionId;
         try
         {
             var verified = await Task.Run(() => corpus.Verify(relative, hash));
@@ -72,9 +84,17 @@ public sealed class PdfPane : UserControl, IDisposable
             path = verified;
             var url = "https://arquivo.estudar/document.pdf?id=" + Uri.EscapeDataString(relative);
             var dark = UI.Brush("Bg").ToString() == "#FF151D1A";
-            await browser.ExecuteScriptAsync($"window.openDocument({JsonSerializer.Serialize(url)},{page},{dark.ToString().ToLowerInvariant()})");
+            var context = JsonSerializer.Serialize(new { id = study?.QuestionId, regions = study?.Regions ?? [] }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            await browser.ExecuteScriptAsync($"window.openDocument({JsonSerializer.Serialize(url)},{page},{dark.ToString().ToLowerInvariant()},{context})");
         }
         catch (Exception ex) { if (!disposed) { message.Text = "Não foi possível exibir o PDF. Confira o acervo em Configurações ou use Abrir original."; System.Diagnostics.Trace.WriteLine(ex); } }
+    }
+    public async Task UpdateRegions(QuestionStudyData study)
+    {
+        if (disposed || study.QuestionId != questionId || browser.CoreWebView2 == null) return;
+        var context = JsonSerializer.Serialize(new { id = study.QuestionId, regions = study.Regions }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        try { await browser.ExecuteScriptAsync($"window.updateQuestion({context})"); }
+        catch (Exception ex) { if (!disposed) message.Text = "Recorte salvo. Reabra a questão para atualizar o leitor."; System.Diagnostics.Trace.WriteLine(ex); }
     }
     public async void Theme(bool dark) { if (browser.CoreWebView2 != null) await browser.ExecuteScriptAsync($"window.setTheme({dark.ToString().ToLowerInvariant()})"); }
     public void Dispose() { disposed = true; request++; browser.Dispose(); }
