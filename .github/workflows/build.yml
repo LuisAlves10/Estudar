@@ -1,0 +1,19 @@
+name: Windows
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test persistence, grading, export and ink
+        run: dotnet run --project Estudo.Tests -c Release
+      - name: Publish portable application
+        shell: pwsh
+        run: ./Publicar.ps1 -SelfContained -Destination ./dist/Estudar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Estudar-Windows-x64
+          path: dist/Estudar
