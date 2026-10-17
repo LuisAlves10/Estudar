@@ -31,7 +31,7 @@ public sealed class Corpus
     public List<Question> Questions { get; }
     public Corpus(string root, string? catalogDirectory = null)
     {
-        Root = Path.GetFullPath(root);
+        Root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         catalogDirectory ??= Path.Combine(root, "Dados");
         Documents = ReadCsv(Path.Combine(catalogDirectory, "PROVAS_MANIFEST.csv"))
             .Select(r => new SourceDocument(r["id"], r["exame"], int.Parse(r["ano_edicao"], CultureInfo.InvariantCulture),

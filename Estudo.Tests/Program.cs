@@ -31,6 +31,7 @@ internal static class Program
             File.WriteAllText(Path.Combine(root, "Dados", "ENEM_QUESTOES_INDEX.csv"), csv.ToString());
             var corpus = new Corpus(root); var store = new AttemptStore(Path.Combine(root, "registros"));
             Check(corpus.ForExam(2025, 1, "ingles").Count == 90, "Canonical question positions and hashes");
+            Check(new Corpus(root + Path.DirectorySeparatorChar).Resolve("prova.pdf") == corpus.Resolve("prova.pdf"), "Portable catalogue root accepts trailing directory separator");
             Reject(() => corpus.Resolve("../outside.pdf"), "Corpus traversal rejected");
             Reject(() => corpus.Verify("prova.pdf", new string('0', 64)), "Corrupt source rejected");
             var attempt = AttemptEngine.Create(corpus, 2025, 1, "ingles", store); var clock = new FakeClock(); var engine = new AttemptEngine(attempt, store, clock);

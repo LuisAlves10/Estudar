@@ -54,9 +54,9 @@ public partial class App : Application
         string? portable = null;
         while (cursor != null)
         {
-            if (preferPortable && File.Exists(Path.Combine(cursor.FullName, "catalogo", "PROVAS_MANIFEST.csv"))) return cursor.FullName;
-            if (File.Exists(Path.Combine(cursor.FullName, "Dados", "PROVAS_MANIFEST.csv"))) return cursor.FullName;
-            if (portable == null && File.Exists(Path.Combine(cursor.FullName, "catalogo", "PROVAS_MANIFEST.csv"))) portable = cursor.FullName;
+            if (preferPortable && File.Exists(Path.Combine(cursor.FullName, "catalogo", "PROVAS_MANIFEST.csv"))) return Path.TrimEndingDirectorySeparator(cursor.FullName);
+            if (File.Exists(Path.Combine(cursor.FullName, "Dados", "PROVAS_MANIFEST.csv"))) return Path.TrimEndingDirectorySeparator(cursor.FullName);
+            if (portable == null && File.Exists(Path.Combine(cursor.FullName, "catalogo", "PROVAS_MANIFEST.csv"))) portable = Path.TrimEndingDirectorySeparator(cursor.FullName);
             cursor = cursor.Parent;
         }
         return portable ?? throw new DirectoryNotFoundException("Catálogo oficial não encontrado.");
