@@ -11,7 +11,7 @@ internal static class UI
     public static TextBlock Text(string text, double size = 14, string color = "Ink", bool bold = false)
     {
         var block = new TextBlock { Text = text, FontSize = size, FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, Margin = new Thickness(0, 0, 0, 6) };
-        block.SetResourceReference(TextBlock.ForegroundProperty, color); return block;
+        block.SetResourceReference(TextBlock.ForegroundProperty, color == "Accent" ? "AccentText" : color); return block;
     }
     public static Button Button(string label, Action action, bool primary = false)
     {
@@ -53,6 +53,7 @@ internal static class UI
             ["Bg"] = dark ? "#151D1A" : "#F3F5F4", ["Surface"] = dark ? "#202B26" : "#FFFFFF", ["Soft"] = dark ? "#293830" : "#EAF0ED",
             ["Ink"] = dark ? "#EDF4F0" : "#1D302B", ["Muted"] = dark ? "#A9BDB2" : "#586D64", ["Line"] = dark ? "#3E5146" : "#D6E0DA",
             ["Accent"] = dark ? "#247E62" : "#126C54", ["AccentSoft"] = dark ? "#264D3D" : "#D8EEE3",
+            ["AccentText"] = dark ? "#80D9AE" : "#126C54",
             ["Good"] = dark ? "#78D4A3" : "#207450", ["Bad"] = dark ? "#F69898" : "#B44242", ["Warn"] = dark ? "#EFC477" : "#996016" };
         foreach (var (key, color) in colors) Application.Current.Resources[key] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
     }

@@ -21,7 +21,7 @@ public sealed class ScratchPad : UserControl
     private readonly ComboBox paper, tool;
     private readonly Slider width = new() { Minimum = 1, Maximum = 16, Value = 3, Width = 90, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Espessura da caneta" };
     private readonly TextBlock status = UI.Text("Rascunho por questão", 12, "Muted");
-    private readonly Button undoButton, redoButton;
+    private readonly Button undoButton, redoButton, detachButton, positionButton;
     private readonly string folder;
     private readonly bool readOnly;
     private bool changing, dirty;
@@ -39,7 +39,8 @@ public sealed class ScratchPad : UserControl
         width.ValueChanged += (_, _) => { ink.DefaultDrawingAttributes.Width = width.Value; ink.DefaultDrawingAttributes.Height = width.Value; };
         undoButton = UI.Button("Desfazer", Undo); redoButton = UI.Button("Refazer", Redo);
         var clear = UI.Button("Limpar", () => { if (UI.Confirm("Limpar este rascunho?", "Os traços desta questão serão removidos. Você pode desfazer enquanto o rascunho estiver aberto.", "Limpar rascunho")) { ink.Strokes.Clear(); CaptureChange(); } });
-        var toolbar = UI.Row(tool, color, width, undoButton, redoButton, clear, paper, zoom, UI.Button("Destacar ↗", detach), UI.Button("Trocar lado", position));
+        detachButton = UI.Button("Destacar ↗", detach); positionButton = UI.Button("Trocar lado", position);
+        var toolbar = UI.Row(tool, color, width, undoButton, redoButton, clear, paper, zoom, detachButton, positionButton);
         foreach (var control in new Control[] { tool, color, width, undoButton, redoButton, clear }) control.IsEnabled = !readOnly;
         var grid = new Grid(); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new()); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
         grid.Children.Add(toolbar); Grid.SetRow(scroll, 1); grid.Children.Add(scroll); Grid.SetRow(status, 2); grid.Children.Add(status); Content = grid;
@@ -95,4 +96,5 @@ public sealed class ScratchPad : UserControl
         StudyFiles.AtomicWrite(Path.Combine(folder, "rascunho.png"), png.ToArray()); dirty = false; status.Text = "✓ Rascunho salvo neste dispositivo";
     }
     public void SetPaused(bool paused) { if (readOnly) return; ink.IsEnabled = !paused; }
+    public void SetDetached(bool detached) { detachButton.Content = detached ? "Voltar ao painel" : "Destacar ↗"; positionButton.Visibility = detached ? Visibility.Collapsed : Visibility.Visible; }
 }

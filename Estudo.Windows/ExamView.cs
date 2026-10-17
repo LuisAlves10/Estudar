@@ -81,7 +81,8 @@ public sealed class ExamView : UserControl, IDisposable
             questionTitle.Text = $"Questão {Current.Number}"; meta.Text = Exporter.AreaName(Current.Area) + " · caderno azul" + (Current.Language == "nao_se_aplica" ? "" : " · " + Exporter.LanguageName(Current.Language));
             result.Text = Attempt.IsFinished ? $"{ResultsView.OutcomeLabel(Exporter.Outcome(Current, r))}\nSua resposta: {r.Answer ?? "em branco"} · oficial: {Current.OfficialAnswer}" : "";
             result.Visibility = Attempt.IsFinished ? Visibility.Visible : Visibility.Collapsed;
-            foreach (var b in answers) { var selected = (string)b.Content == r.Answer; b.SetResourceReference(BackgroundProperty, selected ? "Accent" : "Surface"); b.SetResourceReference(ForegroundProperty, selected ? "WhiteText" : "Ink"); if (selected) b.Foreground = Brushes.White; b.IsEnabled = editable; }
+            result.SetResourceReference(ForegroundProperty, Exporter.Outcome(Current, r) == "erro" ? "Bad" : Exporter.Outcome(Current, r) == "acerto" ? "Good" : "Muted");
+            foreach (var b in answers) { var selected = (string)b.Content == r.Answer; b.SetResourceReference(BackgroundProperty, selected ? "Accent" : "Surface"); if (selected) b.Foreground = Brushes.White; else b.SetResourceReference(ForegroundProperty, "Ink"); b.IsEnabled = editable; }
             blank.IsEnabled = confidence.IsEnabled = review.IsEnabled = editable; notes.IsReadOnly = !editable;
             confidence.SelectedIndex = r.Confidence switch { "certeza" => 1, "duvida" => 2, "chute" => 3, _ => 0 };
             review.IsChecked = r.Review; notes.Text = r.Notes; postNotes.Text = files.ReviewNotes(Attempt.Id, Current.Id);
@@ -166,8 +167,9 @@ public sealed class ExamView : UserControl, IDisposable
     {
         scratch?.Flush(); scratchHost.Content = null;
         if (scratchWindow != null) scratchWindow.Content = null;
-        scratch = new ScratchPad(files.Folder(Attempt.Id, Current.Id), Attempt.IsFinished, shell.Preferences.Paper, DetachScratch, () => { shell.Preferences.ScratchOnLeft = !shell.Preferences.ScratchOnLeft; shell.SavePreferences(); ApplyPosition(shell.Preferences.ScratchOnLeft); });
+        scratch = new ScratchPad(files.Folder(Attempt.Id, Current.Id), Attempt.IsFinished, shell.Preferences.Paper, ToggleDetach, () => { shell.Preferences.ScratchOnLeft = !shell.Preferences.ScratchOnLeft; shell.SavePreferences(); ApplyPosition(shell.Preferences.ScratchOnLeft); });
         scratch.SetPaused(!engine.Running);
+        scratch.SetDetached(scratchWindow != null);
         if (scratchWindow != null) { scratchWindow.Title = $"Rascunho · questão {Current.Number}"; scratchWindow.Content = new Border { Padding = new Thickness(14), Child = scratch }; }
         else scratchHost.Content = scratch;
     }
@@ -181,11 +183,24 @@ public sealed class ExamView : UserControl, IDisposable
     {
         if (scratchWindow != null) return;
         scratchHost.Content = null; scratchHost.Visibility = Visibility.Collapsed; scratchVisible = false; answerPanel.Visibility = Visibility.Visible; side.MinWidth = 292; ApplyPosition(false);
-        scratchWindow = new Window { Title = $"Rascunho · questão {Current.Number}", Width = 900, Height = 680, MinWidth = 540, MinHeight = 400, Owner = shell, Content = new Border { Padding = new Thickness(14), Child = scratch } };
-        scratchWindow.Closing += (_, _) => UI.Safe(() => scratch?.Flush());
-        scratchWindow.Closed += (_, _) => { scratchWindow = null; scratch = null; };
+        scratch!.SetDetached(true);
+        var detached = new Window { Title = $"Rascunho · questão {Current.Number}", Width = 900, Height = 680, MinWidth = 540, MinHeight = 400, Owner = shell, Content = new Border { Padding = new Thickness(14), Child = scratch } };
+        scratchWindow = detached;
+        scratchWindow.Closing += (_, e) => { try { scratch?.Flush(); } catch (Exception ex) { e.Cancel = true; UI.Alert("Não foi possível salvar o rascunho", ex.Message); } };
+        scratchWindow.Closed += (_, _) => { if (ReferenceEquals(scratchWindow, detached)) { scratchWindow = null; scratch = null; } };
         scratchWindow.Deactivated += (_, _) => Dispatcher.BeginInvoke(PauseWhenInactive, DispatcherPriority.Background);
         scratchWindow.Show();
+    }
+    private void ToggleDetach()
+    {
+        if (scratchWindow == null) { DetachScratch(); return; }
+        var window = scratchWindow; var pad = scratch!;
+        pad.Flush();
+        if (window.Content is Border container) container.Child = null;
+        window.Content = null; scratchWindow = null; window.Close(); scratch = pad;
+        pad.SetDetached(false); scratchHost.Content = pad; scratchHost.Visibility = Visibility.Visible;
+        answerPanel.Visibility = Visibility.Collapsed; scratchVisible = true; side.MinWidth = 380;
+        ApplyPosition(shell.Preferences.ScratchOnLeft);
     }
     private void KeyDownHandler(object sender, KeyEventArgs e)
     {
