@@ -9,4 +9,5 @@ dotnet publish (Join-Path $PSScriptRoot 'Estudo.Windows/Estudo.Windows.csproj') 
 if ($LASTEXITCODE -ne 0) { throw 'A publicação falhou; confira o resultado da compilação.' }
 Write-Output "Publicado em $executablePath"
 foreach ($folder in @('catalogo','scripts','licenses')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $folder) -Destination $Destination -Recurse -Force }
+if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'docs')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs') -Destination $Destination -Recurse -Force }
 foreach ($file in @('baixar-provas.bat','README.md','LICENSE','THIRD-PARTY-NOTICES.md')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination $Destination -Force }
